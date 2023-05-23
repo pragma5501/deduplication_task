@@ -1,0 +1,27 @@
+Test with simple text files
+
+Test first method
+
+Case 1: Text file with same contents
+
+Case 2: Text file with same size but different contents
+Binary files hello_1.txt and hello_2.txt differ
+
+Case 3: Text file with same contents and aditional contents
+Binary files hello_1.txt and hello_2.txt differ
+
+Test second method
+
+Case 1: Text file with same contents
+59ca0efa9f5633cb0371bbc0355478d8  hello_1.txt
+59ca0efa9f5633cb0371bbc0355478d8  hello_2.txt
+
+Case 2: Text file with same size but different contents
+59ca0efa9f5633cb0371bbc0355478d8  hello_1.txt
+95b5ee5c897669bb4c75df09429ac989  hello_2.txt
+Binary files hello_1.txt and hello_2.txt differ
+
+Case 3: Text file with same contents and aditional contents
+59ca0efa9f5633cb0371bbc0355478d8  hello_1.txt
+85ff1dc767af69643837ffff3c680827  hello_2.txt
+Binary files hello_1.txt and hello_2.txt differ
