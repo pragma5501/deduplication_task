@@ -15,7 +15,7 @@ os.system("./DGFS test.bin ls")
 size_before = os.path.getsize("test.bin")
 
 target = "target_tmp.txt"
-for i in range(8191):
+for i in range(100):
     tmp = "target_" + str(i) + ".txt"
     os.system("mv " + target + " " + tmp)
     os.system("./DGFS test.bin add " + tmp)

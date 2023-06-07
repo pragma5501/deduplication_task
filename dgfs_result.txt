@@ -1,0 +1,41 @@
+DGFS create DGFS.bin
+DGFS.bin already exist
+
+0 block(s) deduplicated
+DGFS add: hello.txt
+
+0 block(s) deduplicated
+DGFS add: foo.txt
+
+1 block(s) deduplicated
+DGFS add: bar.txt
+
+Duplicate file name!
+DGFS add: bar.txt
+
+1 block(s) deduplicated
+DGFS add: os.bin
+
+hello.txt                       	13
+2 0 0 0 0 0 0 0 0 0 0 0 
+foo.txt                         	7
+3 0 0 0 0 0 0 0 0 0 0 0 
+bar.txt                         	7
+3 0 0 0 0 0 0 0 0 0 0 0 
+os.bin                          	8192
+4 4 0 0 0 0 0 0 0 0 0 0 
+Total size: 8219
+Allocated blocks: 3
+
+filename : hello.txt                       
+DGFS remove : hello.txt
+
+foo.txt                         	7
+3 0 0 0 0 0 0 0 0 0 0 0 
+bar.txt                         	7
+3 0 0 0 0 0 0 0 0 0 0 0 
+os.bin                          	8192
+4 4 0 0 0 0 0 0 0 0 0 0 
+Total size: 8206
+Allocated blocks: 2
+

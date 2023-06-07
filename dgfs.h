@@ -12,6 +12,8 @@
 #define _SIZE_INODE_REGION	4 * 1024 * 1024
 #define _SIZE_DATA_REGION 	20 * 1024 * 1024
 
+#define _SIZE_MAP_DATA_BIT 128 * 1024 * 8
+
 #define _SIZE_BLOCK_OFFSET	4 * 1024
 
 #define _SIZE_DATA_TYPE_INODE_BITMAP    2
@@ -70,6 +72,7 @@ typedef struct data_bitmap {
 typedef struct hash_list {
     unsigned char hash[ MD5_DIGEST_LENGTH ];
     struct hash_list* next;
+    int data_number;
 } hash_list;
 
 
@@ -120,12 +123,15 @@ int write_inode_bitmap( FILE *dgfs_file, __le32 offset,  __le16 position, __le16
 int write_data_bitmap( FILE *dgfs_file, __le32 offset,  __le16 position, __le16 bitmap_data);
 _inode_t create_new_inode_w( char* filename, _superblock_t _superblock );
 
+_inode_t write_data( FILE* dgfs_file, _superblock_t _superblock, _inode_t inode, hash_list* head);
+
+int read_inode_bitmap_removing(  FILE*dgfs_file, _superblock_t _superblock, char* filename );
 
 // Function : main
 int DGFS_create(char* file);
 int DGFS_add(char* dgfs_file, char* filename);
-int DGFS_ls();
-int DGFS_remove(char* filename);
+int DGFS_ls(char* filename);
+int DGFS_remove(char* dgfs_filename,char* filename);
 int DGFS_extract(char* filename, char* output_filename);
 
 // Function : util
@@ -136,6 +142,7 @@ int get_le_bit_from_byte( __le16 data ,int offset );
 
 hash_list* hash_list_push(hash_list *cur, char* hash);
 void hash_list_free(hash_list *head);
+int find_dup_hash( hash_list* head, hash_list* cur );
 
 hash_list* make_file_hash( FILE *fp1, _inode_t inode );
 

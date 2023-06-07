@@ -5,7 +5,7 @@
  * @param	file	Name of DGFS file to create
  * @return  Return 0 in case of success and return 1 in case of failure
  */
- 
+int is_name_dup = 0;
 
 int DGFS_create(char* file)
 {
@@ -159,10 +159,9 @@ int read_data_bitmap( FILE* dgfs_file, _superblock_t _superblock ) {
             if( get_le_bit_from_byte( data_bitmap[i], j ) == 1 ) continue;
 
 			write_data_bitmap( dgfs_file, offset_data_bitmap + i * _SIZE_DATA_BITMAP_UNIT * 8, j, data_bitmap[i] );
-			//printf("bitmap : %d\n", data_bitmap[i]);
 
 			// data is unwritten
-            unsigned int data_number = cal_data_number(i, j);
+            unsigned int data_number = cal_data_number(i, j) + 1;
 
 			return data_number;
             
@@ -175,6 +174,71 @@ int read_data_bitmap( FILE* dgfs_file, _superblock_t _superblock ) {
 	printf("Error : DATA BITMAP IS FULL");
 	return -1;
 }
+int read_data_bitmap_written(  FILE*dgfs_file, _superblock_t _superblock ) {
+	unsigned int offset_data_bitmap = _superblock.offset_data_bitmap;
+	fseek( dgfs_file, offset_data_bitmap, SEEK_SET );
+
+	__le16 data_bitmap[ _SIZE_DATA_BITMAP_LE16 ];
+	fread( &data_bitmap, sizeof( __le16 ), _SIZE_DATA_BITMAP_LE16, dgfs_file );
+
+	int allocated_blocks = 0;
+	// read available inode bit
+	for( int i = 0; i < _SIZE_DATA_BITMAP_LE16; i++ ) {
+		for( int j = 0; j < _SIZE_DATA_BITMAP_UNIT * 8; j++ ) {
+			
+			// if the bit of the inode bitmap is 0, the inode numbrr is unwritten
+			if( get_le_bit_from_byte( data_bitmap[i], j ) == 1 ) allocated_blocks++;
+
+		}
+	}
+	printf("Allocated blocks: %d\n", allocated_blocks);
+	return allocated_blocks;
+}
+int read_inode_bitmap_written(  FILE*dgfs_file, _superblock_t _superblock ) {
+	unsigned int offset_inode_bitmap = _superblock.offset_inode_bitmap;
+	fseek( dgfs_file, offset_inode_bitmap, SEEK_SET );
+
+	__le16 inode_bitmap[ _SIZE_INODE_BITMAP_LE16 ];
+	fread( &inode_bitmap, sizeof( __le16 ), _SIZE_INODE_BITMAP_LE16, dgfs_file );
+
+	__le16 map_data_bit[ _SIZE_MAP_DATA_BIT ] = {0};
+
+	int count_inode = 0;
+	int total_size = 0;
+	int allocated_blocks = 0;
+	// read available inode bit
+	for( int i = 0; i < _SIZE_INODE_BITMAP_LE16; i++ ) {
+		for( int j = 0; j < _SIZE_INODE_BITMAP_UNIT * 8; j++ ) {
+			
+			// if the bit of the inode bitmap is 0, the inode numbrr is unwritten
+			if( get_le_bit_from_byte( inode_bitmap[i], j ) == 0 ) continue;
+			unsigned int inode_number = i * _SIZE_INODE_BITMAP_UNIT * 8 + j + 1;
+			_inode_t inode = read_inode( dgfs_file, _superblock.offset_inode_region + inode_number * _SIZE_INODE );
+			total_size += inode.i_size;
+			
+			printf("%-32s\t%ld\n", inode.i_file_name, inode.i_size);
+
+			// count allocated_block
+			for(int x = 0; x < _EXT2_N_BLOCKS_DIRECT; x++) {
+				printf("%d ", inode.i_block[x] );
+				if( (map_data_bit[ inode.i_block[x] ] == 1) || inode.i_block[x] == 0) continue;
+				map_data_bit[ inode.i_block[x] ] = 1;
+				allocated_blocks += 1;
+			}
+			printf("\n");
+
+			count_inode ++;
+			// every inode detected
+			if( count_inode >= _superblock.total_inodes ) {
+				printf("Total size: %d\n", total_size);
+				printf("Allocated blocks: %d\n", allocated_blocks);
+				return 0; 
+			}
+		}
+	}
+
+}
+
 
 // return inode number
 int read_inode_bitmap( FILE *dgfs_file, _superblock_t _superblock ) {
@@ -212,12 +276,20 @@ int read_inode_bitmap( FILE *dgfs_file, _superblock_t _superblock ) {
 int write_inode_bitmap( FILE *dgfs_file, __le32 offset,  __le16 position, __le16 bitmap_data) {
 	fseek( dgfs_file, offset, SEEK_SET );
 
+
 	bitmap_data += (  (__le16)1 << position );
 	
 	fwrite( &bitmap_data, sizeof( bitmap_data ), 1, dgfs_file );
 	return 0;
 }
+int remove_inode_bitmap( FILE *dgfs_file, __le32 offset,  __le16 position, __le16 bitmap_data) {
+	fseek( dgfs_file, offset, SEEK_SET );
 
+	bitmap_data -= (  (__le16)1 << position );
+
+	fwrite( &bitmap_data, sizeof( bitmap_data ), 1, dgfs_file );
+	return 0;
+}
 
 
 _inode_t create_new_inode_w( char* filename, _superblock_t _superblock ) {
@@ -250,43 +322,55 @@ _inode_t create_new_inode_w( char* filename, _superblock_t _superblock ) {
 
 int write_data_bitmap( FILE *dgfs_file, __le32 offset,  __le16 position, __le16 bitmap_data) {
 	fseek( dgfs_file, offset, SEEK_SET );
-
-	bitmap_data += (  (__le16)1 << position );
 	
+	bitmap_data += (  (__le16)1 << position );
+
 	fwrite( &bitmap_data, sizeof( bitmap_data ), 1, dgfs_file );
 	return 0;
 }
 
-
-int write_data( FILE* dgfs_file, _superblock_t _superblock, _inode_t inode, hash_list* head) {
+_inode_t write_data( FILE* dgfs_file, _superblock_t _superblock, _inode_t inode, hash_list* head) {
 	unsigned int offset_data_bitmap = _superblock.offset_data_bitmap;
-	printf("fuck");
-	unsigned int inode_number = read_inode_bitmap( dgfs_file, _superblock );
+	unsigned int inode_number = read_inode_bitmap( dgfs_file, _superblock ) + 1;
 	
-
+	int count_duplicated = 0;
+	
 	hash_list* cur = head->next;
 	for(int i = 0; i <= BLOCK_DIRECT; i++) {
 		
-		if( cur == NULL ) break;
+		if( cur == NULL ) {
+			break;
+		} 
 
 		// already link
 		if( inode.i_block[i] != 0 ) {
+			count_duplicated ++;
+			cur = cur->next;
 			continue;
 		}
+		int temp_data_number = find_dup_hash(head, cur);
 
+		if( temp_data_number != -1 ) {
+			count_duplicated ++;
+			inode.i_block[i] = temp_data_number;
+			cur = cur->next;
+			continue;
+		}
 		// write data
-		__le32 data_number = read_data_bitmap( dgfs_file, _superblock );
+		__le32 data_number = read_data_bitmap( dgfs_file, _superblock ) + 1;
+		
 		inode.i_block[i] = data_number;
 		unsigned int offset_data = _superblock.offset_data_region + data_number * _SIZE_DATA;
-        
+		
 
 		fseek( dgfs_file, offset_data, SEEK_SET );
 		fwrite( cur->hash, sizeof(unsigned char), MD5_DIGEST_LENGTH, dgfs_file );
 
-		unsigned char temp[MD5_DIGEST_LENGTH];
-		fseek( dgfs_file, offset_data, SEEK_SET );
-		fread( temp, sizeof(unsigned char), MD5_DIGEST_LENGTH, dgfs_file );
-		printf("%s\n",temp);
+		//unsigned char temp[MD5_DIGEST_LENGTH];
+		//fseek( dgfs_file, offset_data, SEEK_SET );
+		//fread( temp, sizeof(unsigned char), MD5_DIGEST_LENGTH, dgfs_file );
+		//printf("%s\n",temp); 
+		cur->data_number = data_number;
 		cur = cur->next;
 	}
 
@@ -295,9 +379,51 @@ int write_data( FILE* dgfs_file, _superblock_t _superblock, _inode_t inode, hash
 	fseek( dgfs_file, offset_inode, SEEK_SET );
 	fwrite( &inode, sizeof( inode ), 1, dgfs_file );
 
+	printf("%d block(s) deduplicated\n", count_duplicated);
+
+	return inode;
 }
 
+int read_inode_bitmap_removing(  FILE*dgfs_file, _superblock_t _superblock, char* filename ) {
+	
+	unsigned int offset_inode_bitmap = _superblock.offset_inode_bitmap;
+	fseek( dgfs_file, offset_inode_bitmap, SEEK_SET );
 
+	__le16 inode_bitmap[ _SIZE_INODE_BITMAP_LE16 ];
+	fread( &inode_bitmap, sizeof( __le16 ), _SIZE_INODE_BITMAP_LE16, dgfs_file );
+
+	int count_inode = 0;
+
+	// read available inode bit
+	for( int i = 0; i < _SIZE_INODE_BITMAP_LE16; i++ ) {
+		for( int j = 0; j < _SIZE_INODE_BITMAP_UNIT * 8; j++ ) {
+			//printf("%d, %d : i, j : bit(%d)\n", i, j, get_le_bit_from_byte( inode_bitmap[i], j ) );
+			// if the bit of the inode bitmap is 0, the inode numbrr is unwritten
+			if( get_le_bit_from_byte( inode_bitmap[i], j ) == 0 ) continue;
+			
+			unsigned int inode_number = i * _SIZE_INODE_BITMAP_UNIT * 8 + j + 1;
+			_inode_t inode = read_inode( dgfs_file, _superblock.offset_inode_region + inode_number * _SIZE_INODE );
+			printf("filename : %-32s\n", inode.i_file_name);
+			// if find filename
+			if( strncmp( filename, inode.i_file_name, strlen(filename) ) == 0) {
+				remove_inode_bitmap( dgfs_file, offset_inode_bitmap + i * _SIZE_DATA_BITMAP_UNIT * 8, j, inode_bitmap[i]);
+				
+				_superblock.total_inodes -= 1;
+				
+				modify_superblock( dgfs_file, _superblock );
+				return 0;
+			}
+
+			count_inode ++;
+			// every inode detected, but not found
+			if( count_inode >= _superblock.total_inodes ) {
+				
+				return 1; 
+			}
+		}
+	}
+	return 1;
+}
 
 /**
  * Add file in DGFS. If there is block with same contents in DGFS,
@@ -325,21 +451,19 @@ int DGFS_add(char* dgfs_file, char* filename)
 	hash_list* head = make_file_hash( fp_file, inode );
 
 	inode = link_duplicated_hash( fp_dgfs, _superblock, inode, head );
-	for(int i = 0; i < 15; i++ ) {
-		printf("inode i_block i : %d\n", inode.i_block[i]);
+	if( is_name_dup == 0 ) {
+		inode = write_data( fp_dgfs, _superblock, inode, head  );
+	} else {
+		printf("Duplicate file name!\n");
 	}
 	
-	write_data( fp_dgfs, _superblock, inode, head  );
 
 	hash_list_free( head );
-	
-	
 
 	fclose(fp_dgfs);
 	fclose(fp_file);
 
 	printf("DGFS add: %s\n", filename);
-	printf("Duplicate file name!\n");
 	//printf("%d block(s) deduplicated\n", deduplicated_block_count);
 	return 0;
 }
@@ -349,9 +473,19 @@ int DGFS_add(char* dgfs_file, char* filename)
  * print total size of files and number of data blocks in use.
  * @return  Return 0 in case of success and return 1 in case of failure
  */
-int DGFS_ls()
+int DGFS_ls(char* filename)
 {
-	printf("%-32s\tSize\n", "Filename"); // print information layout
+	FILE *fp_dgfs = fopen( filename, "rb");
+
+	// file does not exist
+	if( fp_dgfs == NULL ) return 1;
+
+	_superblock_t _superblock = read_superblock( fp_dgfs );
+	
+	read_inode_bitmap_written( fp_dgfs, _superblock );
+	//read_data_bitmap_written(  fp_dgfs, _superblock );
+	
+	fclose( fp_dgfs);
 	//printf("%-32s\t%ld\n", name, size);
 	//printf("Total size: %lld\n", total_size);
 	//printf("Allocated blocks: %d\n", block_count);
@@ -363,8 +497,26 @@ int DGFS_ls()
  * @param	filename	Name of file to remove in DGFS
  * @return  Return 0 in case of success and return 1 in case of failure
  */
-int DGFS_remove(char* filename)
+int DGFS_remove(char* dgfs_filename,char* filename)
 {
+
+	FILE *fp_dgfs = fopen( dgfs_filename, "rb+" );
+	if( fp_dgfs == NULL ) {
+		return 1;
+	}
+	_superblock_t _superblock = read_superblock( fp_dgfs );
+
+	int is_remove = read_inode_bitmap_removing( fp_dgfs, _superblock, filename);
+	
+	// remove success
+	if( is_remove == 0 ) {
+		printf("DGFS remove : %s\n", filename);
+	}
+	if( is_remove == 1 ) {
+		printf("%s not found!\n", filename);
+	}
+
+	fclose( fp_dgfs );
 	//printf("DGFS remove: %s\n", filename);
 	//printf("%s not found!\n", filename);
 	return 0;
@@ -411,7 +563,7 @@ int main(int argc, char* argv[])
 			printf("Usage: ./DGFS DGFS_file ls\n");
 			return 0;
 		}
-		DGFS_ls();
+		DGFS_ls(argv[1]);
 		return 0;
 	}
 	else if (strcmp(argv[2], "extract") == 0) {
@@ -427,7 +579,7 @@ int main(int argc, char* argv[])
 			printf("Usage: ./DGFS DGFS_file remove filename\n");
 			return 0;
 		}
-		DGFS_remove(argv[3]);
+		DGFS_remove(argv[1],argv[3]);
 		return 0;
 	}
 	else {
@@ -443,9 +595,9 @@ hash_list* hash_list_push(hash_list *cur, char* hash) {
 
     strncpy( new_hash_node->hash, hash,  MD5_DIGEST_LENGTH ); 
     new_hash_node->next = NULL;
-
+	new_hash_node->data_number = -1;
     cur->next = new_hash_node;
-
+	
     return new_hash_node;
 }
 void hash_list_free(hash_list *head) {
@@ -454,8 +606,22 @@ void hash_list_free(hash_list *head) {
         hash_list* cur = head->next;
         head->next = cur->next;
         free( cur );
-        
     };
+	free(head);
+}
+int find_dup_hash( hash_list* head, hash_list* cur ) {
+	hash_list* temp = head->next;
+	
+	while( temp != NULL ) {
+		if( temp == cur ) return -1;
+		if( strncmp(temp->hash, cur->hash, MD5_DIGEST_LENGTH) == 0 ) {
+			
+			cur->data_number = temp->data_number;
+			return cur->data_number;
+		}
+		temp = temp->next;
+	}
+	return -1;
 }
 
 hash_list* make_file_hash( FILE *fp1, _inode_t inode ) {
@@ -463,7 +629,7 @@ hash_list* make_file_hash( FILE *fp1, _inode_t inode ) {
     // head hash value = NULL
     hash_list *head = (hash_list*)malloc(sizeof(hash_list));
     head->next = NULL;
-
+	head->data_number = -1;
     hash_list *cur = head;
 
     MD5_CTX mdContext;
@@ -511,30 +677,37 @@ _inode_t link_duplicated_hash( FILE* dgfs_file, _superblock_t _superblock, _inod
             // check inode is unused, if so continue
             if( get_le_bit_from_byte( inode_bitmap[i], j ) == 0 ) continue;
 
-            unsigned int inode_number = cal_inode_number(i, j);
+            unsigned int inode_number = cal_inode_number(i, j) + 1;
             unsigned int offset_inode = _superblock.offset_inode_region + inode_number * _SIZE_INODE;
             
             _inode_t inode = read_inode( dgfs_file, offset_inode );
-            
+           
             // check duplication
             new_inode = check_dup( dgfs_file ,_superblock, inode, new_inode, head );
-
+			if( is_name_dup == 1 ) {
+				return new_inode;
+			}
             // if duplicated
             //modify_inode( dgfs_file, offset_inode, inode );
 
             count++;
-            if(count == _superblock.total_inodes ) return new_inode;
+            if(count >= _superblock.total_inodes ) return new_inode;
         }
     }
     return new_inode;
 }
 // inode is origin inode
 _inode_t check_dup(FILE *dgfs_file,_superblock_t _superblock, _inode_t inode, _inode_t new_inode,hash_list* head ) {
-    hash_list *cur = head;
+    if( !strcmp(inode.i_file_name, new_inode.i_file_name ) ) {
+		is_name_dup = 1;
+		return new_inode;
+	}
+	
+	hash_list *cur = head;
 
     for(int i = 0; i < _EXT2_N_BLOCKS; i++) {
         cur = cur->next;
-        __le32 data_number = inode.i_block[i];
+        __le32 data_number = inode.i_block[i] + 1;
 
         //__le16 data_bit = get_le_bit_from_byte( (int)(data_number / sizeof(__le16) / 8 ), data_number % ( sizeof(_le16) *  8 ) );
 
@@ -542,7 +715,7 @@ _inode_t check_dup(FILE *dgfs_file,_superblock_t _superblock, _inode_t inode, _i
         if( new_inode.i_block[i] != 0 ) {
             continue;
         }
-        if( cur == NULL || data_number == 0) {
+        if( cur == NULL ) {
             break;
         }
 
@@ -561,9 +734,7 @@ _inode_t check_dup(FILE *dgfs_file,_superblock_t _superblock, _inode_t inode, _i
         }
 
         // if duplicated
-		printf("duplicated : %d\n", data_number );
         new_inode.i_block[i] = data_number;
-		
         
     }
     // dup is true
@@ -578,5 +749,6 @@ int cal_data_number( int offset_data_bitmap_unit, int position ) {
 }
 
 int get_le_bit_from_byte( __le16 data ,int offset ) {
-	return ( data << ( sizeof(__le16)*8 - 1 - offset ) ) >> ( sizeof(__le16)*8 - 1 );
+	__le16 bit = ( data << ( sizeof(__le16)*8 - offset - 1) );
+    return bit >> ( sizeof(__le16)*8 -1  );
 }
